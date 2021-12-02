@@ -2,10 +2,8 @@
 title: "A3"
 author: "Konrad Smyth"
 date: "25/11/2021"
-output:
-  word_document: default
-  html_document: default
-  pdf_document: default
+output: rmarkdown::github_document
+
 ---
 
 ```{r setup, include=FALSE}
