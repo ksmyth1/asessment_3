@@ -1,0 +1,280 @@
+---
+title: "A3"
+author: "Konrad Smyth"
+date: "25/11/2021"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+
+library(knitr)
+library(stringr)
+library(ggplot2)
+library(tidyverse)
+library(e1071)
+library(lubridate)
+
+```
+
+
+```{r}
+
+df <- read.csv('melbourne.csv')
+
+df <- df[complete.cases(df[ , c("Date","Minimum.temperature..Deg.C.","Maximum.Temperature..Deg.C.","Evaporation..mm.","X9am.relative.humidity....")]), ]
+
+```
+
+```{r}
+
+df$Month <- format(as.Date(df$Date,format="%Y-%m-%d"), format = "%m")
+
+df$DayofWeek <- wday(df$Date)
+
+df  <- 
+  df %>%
+  mutate(Month = factor(Month),
+         DayofWeek = factor(DayofWeek))
+  
+str(df)
+```
+
+```{r}
+
+ggplot(df, aes(x=Month, y=Evaporation..mm.)) + geom_boxplot()
+
+```
+There is clearly a relationship between Month and Evaporation. The relationship shape is approximately a cyclical wave. Evaporation is highest in late Summer (Month 01) dropping each month to the lowest point in Early Winter (Month 06), then rising gradually month on month to the high again in Month 01 the following year.
+
+```{r}
+
+ggplot(df, aes(x=DayofWeek, y=Evaporation..mm.)) + geom_boxplot()
+
+```
+The plot shows a no strong relationship between Dayof Week and Evaporation. This makes sense logically, as unlike Months which can be associated with Seasons, Days of the Week are not associated with any particular weather events, all seasons get 13 sets of Days 1 to 7, so the seasonal weather effects will average out. 
+
+```{r}
+
+ggplot(df, aes(x=Evaporation..mm.)) + geom_histogram()
+
+```
+The target variable looks to be right skewed based on the histogram. 
+
+```{r}
+
+skewness(df$Evaporation..mm.)
+
+```
+
+Calculating the skewness value of Evaporation, a value higher than 1 indicates highly right skewed data, which matches with the histogram. Given Evaporation can also not be negative, this is the kind of variable that will benefit from a log transformation to noramlize it. 
+
+```{r}
+
+df$Log_Evaporation <- log(df$Evaporation..mm.)
+
+df$Log_Evaporation[which(!is.finite(df$Log_Evaporation))] <- 0
+
+```
+
+```{r}
+
+ggplot(df, aes(x=Log_Evaporation)) + geom_histogram()
+
+```
+
+```{r}
+
+ggplot(df, aes(x=Minimum.temperature..Deg.C. , y=Log_Evaporation)) + geom_point() + geom_smooth(method = "lm")
+
+```
+
+The plot shows a strong positive linear relationship between Maximum Temperature and Evaporation, however with a high degree of variation. This is logical, as heat is a catalyst for evaporation physically. This is the same principle why you blow dry your hair with hot air instead of cold air. 
+
+```{r}
+
+ggplot(df, aes(x=Maximum.Temperature..Deg.C. , y=Log_Evaporation)) + geom_point() + geom_smooth(method = "lm")
+
+```
+
+The plot shows a a strong positive linear relationship between Maximum Temperature and Evaporation, however with a high degree of variation. This is a very similar relationship to Minimum Temperature. 
+
+```{r}
+
+ggplot(df, aes(x=X9am.relative.humidity.... , y=Log_Evaporation)) + geom_point() + geom_smooth(method = "lm")
+
+```
+There is a clear negative linear relationship between average daily humidity and evaporation. There is also evidence of heteroscedasticity, meaning error variance is not similar along the model. This needs to be kept in mind as in linear modelling, significance typically relies on modelling errors having similar variances. 
+
+
+```{r}
+
+model1 <- lm(Log_Evaporation ~ Minimum.temperature..Deg.C. + Maximum.Temperature..Deg.C. + X9am.relative.humidity.... + Month + DayofWeek,  data = df)
+
+summary(model1)
+
+```
+```{r}
+
+anova(model1)
+
+```
+
+The Variance Table shows that 'DayofWeek' is not a significant predictor. It's P value is 0.1179, which is higher than the typical test for significance at 0.05. This is exactly what we would expect logically, and what was shown by the box-plot. We will remove this variable to form a new model. 
+
+```{r}
+
+model2 <- lm(Log_Evaporation ~ Minimum.temperature..Deg.C. + Maximum.Temperature..Deg.C. + X9am.relative.humidity.... + Month,  data = df)
+
+summary(model2)
+
+```
+
+```{r}
+
+anova(model2)
+
+```
+
+The Variance Table shows that 'Month' is a significant predictor, so we will leave it in the final model. It's P value is 2.665e-08, which passes the test for significance at 0.05. 
+
+This makes sense looking back at our box-plot, there was a clear relationship which tracked seasonal patterns across the months.
+
+Maximum.Temperature..Deg.C. has a very high P value at 0.89656. This would be because Maximum and Minimum temperatures are highly correlated, so the model is not getting any additional predcitive power from Maximum Temperature compared with using Minimum Temperature. So we will remove this one from the model and try again. 
+
+```{r}
+str(df)
+
+library(ggcorrplot)
+
+df_corr <- df[c('Minimum.temperature..Deg.C.','Maximum.Temperature..Deg.C.','X9am.relative.humidity....')]
+
+str(df_corr)
+
+corr <- cor.test(df$Minimum.temperature..Deg.C., df$Maximum.Temperature..Deg.C., 
+                    method = "pearson")
+corr
+
+
+```
+
+```{r}
+
+model3 <- lm(Log_Evaporation ~ Minimum.temperature..Deg.C. + X9am.relative.humidity.... + Month,  data = df)
+
+summary(model3)
+
+```
+
+```{r}
+
+anova(model3)
+
+```
+
+We now have a model where all variables are significant and have predictive power. DaysofWeek was an obvious candidate to be removed based on lack of relationship discovered in the bivariate analysis. Maximum Temperature however showed a strong relationship on it's own with Evaporation, but owing to it being highly correlated with Minimum Temperature, it was not necessary for the model. Either one of the temperature variables needed to be present, but not both. 
+
+```{r}
+
+model3$coefficients
+
+```
+
+```{r}
+june_c <- (exp(-0.84549665) - 1) * 100
+june_c
+```
+
+In the summary, the Months are listed individually as factors. Month01 (January) is the reference factor. Similar to the box-plot between Month and Evaporation, you can see that Month06 (June) has a very significant effect on Log_Evaporaiton, that works out to a -57.07% reduction in Evaporation.mm.m in June, compared with January. 
+
+
+```{r}
+intercept <- exp(2.30397922)
+intercept
+```
+
+An intercept of 10.01395 indicates that 10.01mm of Evaporation would be expected if all feature variables were set to zero and the month was January. 
+
+```{r}
+temp_c <- (exp(0.05392585) - 1) * 100
+temp_c
+```
+
+A coefficient of 5.540634 indicates that for every 1 degree of Minimum.temperature..Deg.C. increased, the Evaporation (in mm) would increase by 5.54%. 
+
+```{r}
+humid_c <- (exp(-0.01791612) - 1) * 100
+humid_c
+```
+
+A coefficient of 1.775658 indicates that for every 1% increase of Relative Humidity at 9am, the Evaporation (in mm) would decrease by 1.78%. 
+
+As a sense check, the relationships explained by the coefficients all align with the positive/negative relationships discovered in the bivariate analysis.
+
+```{r}
+plot(model3)
+```
+1. Residuals vs Fitted
+
+This plot is designed to check if the relationship is non-linear (for example exponential). In this case, the residual errors are spread randomly above and below the line, which means the assumption of linearity holds. 
+
+2. Normal Q-Q
+
+This plot is designed to test whether the residuals confirm to a normal distribution shape (represented by the straight line). We see that for the vast majority of residuals, a normal distribution holds, though there are some outliers at the extremes. So the normal distribution of residuals holds.
+
+3. Scale-Location
+
+This plot is designed to test for hetroscedasticity. We can see a slight downwards trend in the red line, indicating that variance was not exactly even, variance had a tendency to decrease for larger fitted values. In this case, the trend is not so severe that we should reject the hypothesis of homocedasticity.
+
+4. Residuals vs Leverage
+
+This plot is designed to help identify influential outliers that may be skewing the model. Though there are some outliers in the data, this does not look to have skewed the model, as the red line is not attracted to those points significantly. 
+
+Other linear model assumptions:
+Independence - Currently, we have no basis to assume that the observations were not indepedent. Independence can be violated by changes in measurement device or methodology, where observations after a certain point in time will be similar to each other in ways they aren't to observations prior to the change. In this case, no such changes are noted. 
+
+Predictions:
+
+• February 29, 2020, if this day has a minimum temperature of 13.8 degrees and reaches a maximum of 23.2 degrees, and has 74% humidity at 9am.
+• December 25, 2020, if this day has a minimum temperature of 16.4 degrees and reaches a maximum of 31.9 degrees, and has 57% humidity at 9am.
+• January 13, 2020, if this day has a minimum temperature of 26.5 degrees and reaches a maximum of 44.3 degrees, and has 35% humidity at 9am.
+• July 6, 2020, if this day has a minimum temperature of 6.8 degrees and reaches a maximum of 10.6 degrees, and has 76% humidity at 9am.
+
+As mentioned earlier, our final model, model3 does not use maximum temperature, so we will only use 3 features, the Month (02), the minimum temperature (13.8) and the relative humidity at 9am (74).
+
+```{r}
+
+Month <- c("02", "12", "01", "07")
+Minimum.temperature..Deg.C. <- c(13.8, 16.4, 26.5, 6.8)
+X9am.relative.humidity.... <- c(74, 57, 35, 76)
+                     
+preds <- data.frame(Month, Minimum.temperature..Deg.C., X9am.relative.humidity....)
+
+preds  <- 
+  preds %>%
+  mutate(Month = factor(Month))
+
+preds$Log_Evaporation <- predict(model3, preds)
+
+preds$Evaporation..mm. <- exp(preds$Log_Evaporation)
+
+conf <- predict(model3, preds, interval="prediction", level=0.95) 
+
+exp(conf)
+
+```
+
+Predictions with confidence: 
+
+• February 29, 2020, if this day has a minimum temperature of 13.8 degrees and reaches a maximum of 23.2 degrees, and has 74% humidity at 9am, the model has 95% confidence the Evaporation..mm. will be between 4.34mm and 6.19mm, predicting 5.18mm. 
+• December 25, 2020, if this day has a minimum temperature of 16.4 degrees and reaches a maximum of 31.9 degrees, and has 57% humidity at 9am, the model has 95% confidence the Evaporation..mm. will be between 6.42mm and 9.12mm, predicting 7.65mm. 
+• January 13, 2020, if this day has a minimum temperature of 26.5 degrees and reaches a maximum of 44.3 degrees, and has 35% humidity at 9am, the model has 95% confidence the Evaporation..mm. will be between 17.62mm and 28.29mm, predicting 22.33mm. 
+• July 6, 2020, if this day has a minimum temperature of 6.8 degrees and reaches a maximum of 10.6 degrees, and has 76% humidity at 9am, the model has 95% confidence the Evaporation..mm. will be between 1.62mm and 2.34mm, predicting 1.95mm. 
+
+Sense checking our prediction results, January 13 2020 is a day with high minimum temperature, low humidity, and is a summer month, so a high amount of evaporation is logical given the relationships we have explored. July 6 2020 is a day with low minimum temperature, high humidity, and is a winter month, so a low amount of evaporation is also logical given the same relationships.
+
+Only January 13 2020 shows a 95% confidence for exceeding 10mm of evaporation at MWC’s Cardinia Reservoir, where the corporation might need to take temporary measures. For the three dates, there is over 95% probability of those conditions not requiring the temporary measures. 
+
+
